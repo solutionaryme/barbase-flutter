@@ -18,7 +18,7 @@ void main() async {
   runApp(const ProviderScope(child: MyApp()));
 }
 
-// Выносим в отдельную функцию
+// Загружаем продукты
 Future<void> _loadProductsToIndex() async {
   try {
     // Получаем экземпляр репозитория через IsarService
