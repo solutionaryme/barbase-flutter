@@ -9,15 +9,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // init Isar
+  // init Isar x123456
   await IsarService.initialize();
 
   // Загружаем продукты в HNSW после инициализации
-  await _loadProductsToIndex();
+  // await _loadProductsToIndex(); // не работает!
 
   runApp(const ProviderScope(child: MyApp()));
 }
-
+/*
 // Загружаем продукты
 Future<void> _loadProductsToIndex() async {
   try {
@@ -46,7 +46,7 @@ Future<void> _loadProductsToIndex() async {
     }
   }
 }
-
+*/
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 

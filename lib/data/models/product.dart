@@ -2,6 +2,7 @@
 import 'package:isar_community/isar.dart';
 
 part 'product.g.dart';
+//TODO: Не забыть добавить все реализаций базы в локальном UI
 
 enum ProductClass {
   unknown(-1, 'Unknown'),

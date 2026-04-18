@@ -26,48 +26,67 @@ class CameraViewModel {
   Map<String, double>? _scanRegion;
 
   CameraViewModel(this._ref, this._productRepository)
-      : _cameraService = CameraService(); // New instance per session
+    : _cameraService = CameraService(); // New instance per session
 
   // ---------------------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------------------
 
-Future<int> initializeCamera() async {
-  try {
-    _textureId = await _cameraService.initialize();
-    
-    // В HNSW ПОСЛЕ ИНИЦИАЛИЗАЦИИ
-    await _loadProductsToHNSW();
-    
-    await _loadScanRegion();
-    _wireCameraCallbacks();
-    return _textureId!;
-  } catch (e) {
-    if (kDebugMode) print('[CameraViewModel] init error: $e');
-    rethrow;
-  }
-}
+  Future<int> initializeCamera() async {
+    try {
+      _textureId = await _cameraService.initialize();
 
-Future<void> _loadProductsToHNSW() async {
-  try {
-    final products = await _productRepository.getAll();
-    final data = products
-        .where((p) => p.hasEmbedding && p.embedding != null)
-        .map((p) => {'skuId': p.skuId, 'embedding': p.embedding})
-        .toList();
-    
-    if (data.isNotEmpty) {
-      await _cameraService.loadAllProductsToHNSW(data);
+      // В HNSW ПОСЛЕ ИНИЦИАЛИЗАЦИИ
+      // грузим данные
+      await _loadProductsToHNSW();
+
+      await _loadScanRegion();
+      _wireCameraCallbacks();
+      return _textureId!;
+    } catch (e) {
+      if (kDebugMode) print('[CameraViewModel] init error: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _loadProductsToHNSW() async {
+    try {
+      // Сначала инициализируем камеру (создаст HNSW)
+      if (_textureId == null) {
+        print('[CameraViewModel] Camera not initialized yet');
+        return;
+      }
+
+      // Загружаем продукты
+      final products = await _productRepository.getAll();
+
+      final data = products
+          .where((p) => p.hasEmbedding && p.embedding != null)
+          .map(
+            (p) => {
+              'skuId': p.skuId,
+              'embedding': p.embedding!.map((e) => e.toDouble()).toList(),
+            },
+          )
+          .toList();
+
+      if (data.isNotEmpty) {
+        await _cameraService.loadAllProductsToHNSW(data);
+        if (kDebugMode) {
+          print('[CameraViewModel] Loaded ${data.length} products to HNSW');
+        }
+      } else {
+        if (kDebugMode) {
+          print('[CameraViewModel] No products with embeddings found');
+        }
+      }
+    } catch (e, stack) {
       if (kDebugMode) {
-        print('[CameraViewModel] Loaded ${data.length} products to HNSW');
+        print('[CameraViewModel] Error loading to HNSW: $e');
+        print('[CameraViewModel] Stack: $stack');
       }
     }
-  } catch (e) {
-    if (kDebugMode) {
-      print('[CameraViewModel] Error loading to HNSW: $e');
-    }
   }
-}
 
   /// Wire callbacks once; they stay active for the full lifetime of the camera
   /// session.  Switching pipeline is purely a UI action — both streams keep
@@ -95,6 +114,7 @@ Future<void> _loadProductsToHNSW() async {
     if (newPipeline == ActivePipeline.barcode) {
       _ref.read(aiStateProvider.notifier).reset();
     } else {
+      // может позже 
       // Don't clear barcodes — the user may want to review them after switching back
     }
   }

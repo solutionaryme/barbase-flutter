@@ -204,58 +204,96 @@ public class CameraPlugin: NSObject, FlutterPlugin, FlutterTexture {
         }
 
         // --- AI pipeline (independent, skip if busy) ---
-        let bufferWidth  = CVPixelBufferGetWidth(buffer)
-        let bufferHeight = CVPixelBufferGetHeight(buffer)
+        let bufferWidth = CGFloat(CVPixelBufferGetWidth(buffer))   // 720
+        let bufferHeight = CGFloat(CVPixelBufferGetHeight(buffer)) // 1280
 
-        aiQueue.async { [weak self] in
+          aiQueue.async { [weak self] in
             guard let self = self else { return }
             guard capturedNow - self.lastAITime > self.minAIInterval else { return }
-            // Skip frame if previous inference is still running
             guard !self.aiIsProcessing else { return }
-
-            self.lastAITime    = capturedNow
+            
+            self.lastAITime = capturedNow
             self.aiIsProcessing = true
-            print("[CameraPlugin] Calling pipeline.processFrame")
+            
             self.aiPipeline?.processFrame(buffer) { [weak self] detections in
-            print("[CameraPlugin] Pipeline callback with \(detections.count) detections")
                 guard let self = self else { return }
                 self.aiIsProcessing = false
                 
-                print("[CameraPlugin] Received \(detections.count) detections from pipeline")
-                
-                let results: [[String: Any]] = detections.map {
-                    // YOLO уже вернул нормализованные координаты 0...1!
-                    let normX = $0.rect.origin.x  // НЕ ДЕЛИТЕ!
-                    let normY = $0.rect.origin.y  // НЕ ДЕЛИТЕ!
-                    let normW = $0.rect.width     // НЕ ДЕЛИТЕ!
-                    let normH = $0.rect.height    // НЕ ДЕЛИТЕ!
+                let results: [[String: Any]] = detections.compactMap { detection in
+                    // 🔥 КЛЮЧЕВОЙ МОМЕНТ: Конвертация из 640x640 в координаты кадра
+                    let modelSize: CGFloat = 640.0
                     
-                    print("[CameraPlugin] Detection: x=\(normX), y=\(normY), w=\(normW), h=\(normH), conf=\($0.confidence)")
+                    // YOLO вернул координаты относительно 640x640 (с паддингом)
+                    var normX = detection.rect.origin.x
+                    var normY = detection.rect.origin.y
+                    var normW = detection.rect.width
+                    var normH = detection.rect.height
                     
-                    // Убедитесь, что координаты не нулевые
-                    if normX == 0 && normY == 0 {
-                        print("[CameraPlugin] ⚠️ Warning: Detection at (0,0) - possible coordinate issue")
+                    // Учитываем letterbox/padding который YOLO добавляет
+                    // Камера 720x1280 -> YOLO масштабирует до 640x640 с паддингом
+                    let frameAspect = bufferWidth / bufferHeight  // 720/1280 = 0.5625
+                    let modelAspect: CGFloat = 1.0  // 640/640 = 1.0
+                    
+                    if frameAspect < modelAspect {
+                        // Портретный режим: паддинг по горизонтали
+                        let paddedWidth = bufferHeight * modelAspect  // 1280 * 1 = 1280
+                        let paddingX = (paddedWidth - bufferWidth) / 2  // (1280-720)/2 = 280
+                        
+                        // Конвертируем координаты YOLO (640x640) в координаты кадра с паддингом
+                        let frameWithPadding = paddedWidth  // 1280
+                        let scale = frameWithPadding / modelSize  // 1280/640 = 2.0
+                        
+                        // YOLO координаты в пикселях кадра с паддингом
+                        let pixelX = normX * frameWithPadding - paddingX
+                        let pixelY = normY * frameWithPadding
+                        let pixelW = normW * frameWithPadding
+                        let pixelH = normH * frameWithPadding
+                        
+                        // Нормализуем обратно к размерам буфера
+                        normX = pixelX / bufferWidth
+                        normY = pixelY / bufferHeight
+                        normW = pixelW / bufferWidth
+                        normH = pixelH / bufferHeight
+                    } else {
+                        // Ландшафтный режим: паддинг по вертикали
+                        let paddedHeight = bufferWidth / modelAspect
+                        let paddingY = (paddedHeight - bufferHeight) / 2
+                        
+                        let frameWithPadding = paddedHeight
+                        let scale = frameWithPadding / modelSize
+                        
+                        let pixelX = normX * frameWithPadding
+                        let pixelY = normY * frameWithPadding - paddingY
+                        let pixelW = normW * frameWithPadding
+                        let pixelH = normH * frameWithPadding
+                        
+                        normX = pixelX / bufferWidth
+                        normY = pixelY / bufferHeight
+                        normW = pixelW / bufferWidth
+                        normH = pixelH / bufferHeight
                     }
-    
-                    // Размеры боксов
-                    guard normX >= 0 && normX <= 1.0 && normY >= 0 && normY <= 1.0 &&
-                        normW > 0.01 && normH > 0.01 && normW < 1.0 && normH < 1.0 else {
-                        print("[CameraPlugin] Filtered out detection")
-                        return nil
-                    }
+                    
+                    // Клиппинг
+                    normX = max(0, min(1 - normW, normX))
+                    normY = max(0, min(1 - normH, normY))
+                    normW = min(normW, 1 - normX)
+                    normH = min(normH, 1 - normY)
+                    
+                    print("[CameraPlugin] Adjusted: x=\(normX), y=\(normY), w=\(normW), h=\(normH)")
+                    
+                    guard normW > 0.02, normH > 0.02 else { return nil }
                     
                     return [
                         "x": normX,
                         "y": normY,
                         "width": normW,
                         "height": normH,
-                        "confidence": $0.confidence,
-                        "skuId": $0.skuId ?? -1,
-                        "classId": $0.classId
+                        "confidence": detection.confidence,
+                        "skuId": detection.skuId ?? -1,
+                        "classId": detection.classId
                     ]
-                }.compactMap { $0 }
+                }
                 
-                print("[CameraPlugin] Sending \(results.count) results to Flutter")
                 self.aiEventSink?(results)
             }
         }
