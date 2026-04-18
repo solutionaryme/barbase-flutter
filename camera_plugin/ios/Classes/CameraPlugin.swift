@@ -220,7 +220,7 @@ public class CameraPlugin: NSObject, FlutterPlugin, FlutterTexture {
                 self.aiIsProcessing = false
                 
                 let results: [[String: Any]] = detections.compactMap { detection in
-                    // 🔥 КЛЮЧЕВОЙ МОМЕНТ: Конвертация из 640x640 в координаты кадра
+                    // Конвертация из 640x640 в координаты кадра
                     let modelSize: CGFloat = 640.0
                     
                     // YOLO вернул координаты относительно 640x640 (с паддингом)
